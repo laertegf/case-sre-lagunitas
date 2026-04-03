@@ -386,3 +386,4 @@ jobs:
           echo "   via HTTP Data Collector API para queries KQL e alertas."
           echo ""
           echo "=== Deploy log emitted successfully ==="
+
