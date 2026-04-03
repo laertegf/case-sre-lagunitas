@@ -1,0 +1,318 @@
+# azure-pipelines.yml — Pipeline refatorado para Lagunitas
+# Autor: Laerte Gomes Filho
+# Fluxo: Build → Deploy DEV → Deploy ACC → Aprovação → Deploy PRD → Smoke Tests → Log
+
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  - name: COMMIT_SHA
+    value: $(Build.SourceVersion)
+  - name: MERGED_BY
+    value: $(Build.RequestedFor)
+
+stages:
+  # ============================================================
+  # STAGE 1: BUILD — Validação de artefatos
+  # ============================================================
+  - stage: Build
+    displayName: 'Build & Validate Artifacts'
+    jobs:
+      - job: BuildJob
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+
+          # Lint de sintaxe Python (mantido do original)
+          - script: |
+              echo "=== Validating notebook syntax ==="
+              find ./notebooks -name '*.py' | xargs python -m py_compile
+              echo "=== Syntax validation passed ==="
+            displayName: 'Lint notebooks (py_compile)'
+
+          # Lint adicional com ruff para pegar problemas além de sintaxe
+          - script: |
+              pip install ruff
+              ruff check ./notebooks --select E,W,F --ignore E501
+            displayName: 'Lint notebooks (ruff)'
+            continueOnError: false
+
+          # Validação de ARM Templates do ADF
+          - script: |
+              echo "=== Validating ADF ARM templates ==="
+              python -m json.tool ./adf/ARMTemplateForFactory.json > /dev/null
+              python -m json.tool ./adf/ARMTemplateParametersForFactory.json > /dev/null
+              echo "=== ARM templates are valid JSON ==="
+            displayName: 'Validate ADF ARM templates'
+
+          # Publicar artefatos
+          - task: CopyFiles@2
+            inputs:
+              contents: |
+                notebooks/**
+                adf/**
+                scripts/**
+              targetFolder: $(Build.ArtifactStagingDirectory)
+            displayName: 'Copy artifacts to staging'
+
+          - publish: $(Build.ArtifactStagingDirectory)
+            artifact: drop
+            displayName: 'Publish artifacts'
+
+  # ============================================================
+  # STAGE 2: DEPLOY DEV — Deploy automático em DEV
+  # ============================================================
+  - stage: DeployDEV
+    displayName: 'Deploy to DEV'
+    dependsOn: Build
+    variables:
+      - group: lagunitas-dev-vars  # Key Vault: kv-lagunitas-dev
+    jobs:
+      - deployment: DeployDevJob
+        environment: 'lagunitas-dev'  # Sem aprovação — deploy automático
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: drop
+
+                - task: AzureCLI@2
+                  displayName: 'Deploy Databricks Notebooks (DEV)'
+                  inputs:
+                    azureSubscription: 'lagunitas-dev-service-connection'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      databricks workspace import_dir \
+                        $(Pipeline.Workspace)/drop/notebooks /Shared/lagunitas \
+                        --host $(DATABRICKS_HOST) \
+                        --token $(DATABRICKS_TOKEN) \
+                        --overwrite
+
+                - task: AzureResourceManagerTemplateDeployment@3
+                  displayName: 'Deploy ADF ARM Template (DEV)'
+                  inputs:
+                    deploymentScope: 'Resource Group'
+                    azureResourceManagerConnection: 'lagunitas-dev-service-connection'
+                    subscriptionId: $(SUBSCRIPTION_ID)
+                    resourceGroupName: $(ADF_RESOURCE_GROUP)
+                    location: 'Brazil South'
+                    templateLocation: 'Linked artifact'
+                    csmFile: '$(Pipeline.Workspace)/drop/adf/ARMTemplateForFactory.json'
+                    csmParametersFile: '$(Pipeline.Workspace)/drop/adf/ARMTemplateParametersForFactory.json'
+                    deploymentMode: 'Incremental'
+
+  # ============================================================
+  # STAGE 3: DEPLOY ACC — Deploy em aceitação com smoke tests
+  # ============================================================
+  - stage: DeployACC
+    displayName: 'Deploy to ACC'
+    dependsOn: DeployDEV
+    variables:
+      - group: lagunitas-acc-vars  # Key Vault: kv-lagunitas-acc
+    jobs:
+      - deployment: DeployAccJob
+        environment: 'lagunitas-acc'  # Sem aprovação, mas com smoke tests
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: drop
+
+                - task: AzureCLI@2
+                  displayName: 'Deploy Databricks Notebooks (ACC)'
+                  inputs:
+                    azureSubscription: 'lagunitas-acc-service-connection'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      databricks workspace import_dir \
+                        $(Pipeline.Workspace)/drop/notebooks /Shared/lagunitas \
+                        --host $(DATABRICKS_HOST) \
+                        --token $(DATABRICKS_TOKEN) \
+                        --overwrite
+
+                - task: AzureResourceManagerTemplateDeployment@3
+                  displayName: 'Deploy ADF ARM Template (ACC)'
+                  inputs:
+                    deploymentScope: 'Resource Group'
+                    azureResourceManagerConnection: 'lagunitas-acc-service-connection'
+                    subscriptionId: $(SUBSCRIPTION_ID)
+                    resourceGroupName: $(ADF_RESOURCE_GROUP)
+                    location: 'Brazil South'
+                    templateLocation: 'Linked artifact'
+                    csmFile: '$(Pipeline.Workspace)/drop/adf/ARMTemplateForFactory.json'
+                    csmParametersFile: '$(Pipeline.Workspace)/drop/adf/ARMTemplateParametersForFactory.json'
+                    deploymentMode: 'Incremental'
+
+                # Smoke tests em ACC (validam a mecânica antes de pedir aprovação PRD)
+                - script: |
+                    bash $(Pipeline.Workspace)/drop/scripts/smoke-test-databricks.sh \
+                      "$(DATABRICKS_HOST)" "$(DATABRICKS_TOKEN)" "/Shared/lagunitas" "ACC"
+                  displayName: 'Smoke Test — Databricks (ACC)'
+
+                - script: |
+                    bash $(Pipeline.Workspace)/drop/scripts/smoke-test-adf.sh \
+                      "$(ADF_RESOURCE_GROUP)" "$(ADF_FACTORY_NAME)" "ACC"
+                  displayName: 'Smoke Test — ADF (ACC)'
+
+  # ============================================================
+  # STAGE 4: DEPLOY PRD — Com gate de aprovação obrigatório
+  # ============================================================
+  # APROVAÇÃO: O Environment 'lagunitas-prd' no Azure DevOps deve ter:
+  #   - Required approvers: Tech Lead de Dados + SRE de plantão
+  #   - Informação visível ao aprovador:
+  #     * Commit SHA e mensagem do merge
+  #     * Quem fez o merge
+  #     * Resultado dos smoke tests de ACC (stage anterior)
+  #     * Link para o diff no Azure Repos
+  #   - Timeout: 4 horas (se não aprovado, pipeline cancela)
+  #   - Exclusive lock: apenas um deploy por vez em PRD
+  # ============================================================
+  - stage: DeployPRD
+    displayName: 'Deploy to PRD (aprovação obrigatória)'
+    dependsOn: DeployACC
+    variables:
+      - group: lagunitas-prd-vars  # Key Vault: kv-lagunitas-prd
+    jobs:
+      - deployment: DeployPrdJob
+        environment: 'lagunitas-prd'  # Requer aprovação manual configurada no Environment
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: drop
+
+                # Snapshot pré-deploy do ADF (para rollback)
+                - task: AzureCLI@2
+                  displayName: 'Snapshot ADF state (pre-deploy)'
+                  inputs:
+                    azureSubscription: 'lagunitas-prd-service-connection'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      echo "=== Saving ADF state before deploy ==="
+                      az datafactory pipeline list \
+                        --resource-group $(ADF_RESOURCE_GROUP) \
+                        --factory-name $(ADF_FACTORY_NAME) \
+                        --output json > $(Pipeline.Workspace)/adf-snapshot-pre-deploy.json
+                      echo "=== ADF snapshot saved ==="
+
+                - publish: $(Pipeline.Workspace)/adf-snapshot-pre-deploy.json
+                  artifact: adf-rollback-snapshot
+                  displayName: 'Publish ADF rollback snapshot'
+
+                # Validação de segurança: confirmar que o host é PRD
+                - script: |
+                    EXPECTED_HOST="https://adb-lagunitas-prd.azuredatabricks.net"
+                    if [[ "$(DATABRICKS_HOST)" != *"prd"* ]]; then
+                      echo "##[error] DATABRICKS_HOST does not contain 'prd'. Aborting deploy."
+                      echo "##[error] Current value: $(DATABRICKS_HOST)"
+                      exit 1
+                    fi
+                    echo "=== Host validation passed: $(DATABRICKS_HOST) ==="
+                  displayName: 'Validate Databricks host is PRD'
+
+                # Deploy Databricks Notebooks
+                - task: AzureCLI@2
+                  displayName: 'Deploy Databricks Notebooks (PRD)'
+                  inputs:
+                    azureSubscription: 'lagunitas-prd-service-connection'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      databricks workspace import_dir \
+                        $(Pipeline.Workspace)/drop/notebooks /Shared/lagunitas \
+                        --host $(DATABRICKS_HOST) \
+                        --token $(DATABRICKS_TOKEN) \
+                        --overwrite
+
+                # Deploy ADF ARM Template
+                - task: AzureResourceManagerTemplateDeployment@3
+                  displayName: 'Deploy ADF ARM Template (PRD)'
+                  inputs:
+                    deploymentScope: 'Resource Group'
+                    azureResourceManagerConnection: 'lagunitas-prd-service-connection'
+                    subscriptionId: $(SUBSCRIPTION_ID)
+                    resourceGroupName: $(ADF_RESOURCE_GROUP)
+                    location: 'Brazil South'
+                    templateLocation: 'Linked artifact'
+                    csmFile: '$(Pipeline.Workspace)/drop/adf/ARMTemplateForFactory.json'
+                    csmParametersFile: '$(Pipeline.Workspace)/drop/adf/ARMTemplateParametersForFactory.json'
+                    deploymentMode: 'Incremental'
+
+                # Reativar triggers ADF pós-deploy
+                - task: AzureCLI@2
+                  displayName: 'Reactivate ADF triggers (PRD)'
+                  inputs:
+                    azureSubscription: 'lagunitas-prd-service-connection'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      echo "=== Reactivating ADF triggers ==="
+                      TRIGGERS=$(az datafactory trigger list \
+                        --resource-group $(ADF_RESOURCE_GROUP) \
+                        --factory-name $(ADF_FACTORY_NAME) \
+                        --query "[].name" -o tsv)
+                      for trigger in $TRIGGERS; do
+                        echo "Starting trigger: $trigger"
+                        az datafactory trigger start \
+                          --resource-group $(ADF_RESOURCE_GROUP) \
+                          --factory-name $(ADF_FACTORY_NAME) \
+                          --name "$trigger"
+                      done
+                      echo "=== All triggers reactivated ==="
+
+  # ============================================================
+  # STAGE 5: SMOKE TESTS PRD + OBSERVABILIDADE
+  # ============================================================
+  - stage: SmokeTestsPRD
+    displayName: 'Smoke Tests & Deploy Log (PRD)'
+    dependsOn: DeployPRD
+    variables:
+      - group: lagunitas-prd-vars
+    jobs:
+      - job: SmokeAndLog
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - download: current
+            artifact: drop
+
+          # Smoke test Databricks
+          - script: |
+              bash $(Pipeline.Workspace)/drop/scripts/smoke-test-databricks.sh \
+                "$(DATABRICKS_HOST)" "$(DATABRICKS_TOKEN)" "/Shared/lagunitas" "PRD"
+            displayName: 'Smoke Test — Databricks workspace & notebooks (PRD)'
+            name: smokeDbx
+
+          # Smoke test ADF
+          - script: |
+              bash $(Pipeline.Workspace)/drop/scripts/smoke-test-adf.sh \
+                "$(ADF_RESOURCE_GROUP)" "$(ADF_FACTORY_NAME)" "PRD"
+            displayName: 'Smoke Test — ADF pipelines & triggers (PRD)'
+            name: smokeAdf
+
+          # Emitir log estruturado para Log Analytics
+          - script: |
+              bash $(Pipeline.Workspace)/drop/scripts/emit-deploy-log.sh \
+                "PRD" \
+                "$(COMMIT_SHA)" \
+                "$(MERGED_BY)" \
+                "$(DATABRICKS_HOST)" \
+                "$(ADF_FACTORY_NAME)" \
+                "$(LOG_ANALYTICS_WORKSPACE_ID)" \
+                "$(LOG_ANALYTICS_SHARED_KEY)"
+            displayName: 'Emit structured deploy log to Log Analytics'

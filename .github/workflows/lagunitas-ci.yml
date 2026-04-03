@@ -1,0 +1,388 @@
+# lagunitas-ci.yml — GitHub Actions equivalente com mocks dos recursos Azure
+# Este workflow simula o pipeline completo sem subscription Azure real.
+# Os steps que interagiriam com Databricks/ADF são substituídos por mocks
+# que simulam o comportamento esperado (sucesso e falha).
+
+name: Lagunitas CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # Permite execução manual para testes
+
+env:
+  DATABRICKS_HOST_DEV: "https://adb-lagunitas-dev.azuredatabricks.net"
+  DATABRICKS_HOST_ACC: "https://adb-lagunitas-acc.azuredatabricks.net"
+  DATABRICKS_HOST_PRD: "https://adb-lagunitas-prd.azuredatabricks.net"
+  ADF_FACTORY_DEV: "adf-lagunitas-dev"
+  ADF_FACTORY_ACC: "adf-lagunitas-acc"
+  ADF_FACTORY_PRD: "adf-lagunitas-prd"
+  ADF_RESOURCE_GROUP: "rg-lagunitas-data"
+  TARGET_PATH: "/Shared/lagunitas"
+
+jobs:
+  # ============================================================
+  # JOB 1: BUILD — Validação de artefatos
+  # ============================================================
+  build:
+    name: "Build & Validate"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Lint notebooks (py_compile)
+        run: |
+          echo "=== Validating notebook syntax ==="
+          find ./notebooks -name '*.py' | xargs python -m py_compile
+          echo "=== Syntax validation passed ==="
+
+      - name: Lint notebooks (ruff)
+        run: |
+          pip install ruff
+          ruff check ./notebooks --select E,W,F --ignore E501
+          echo "=== Ruff linting passed ==="
+
+      - name: Validate ADF ARM templates (JSON syntax)
+        run: |
+          echo "=== Validating ADF ARM templates ==="
+          python -m json.tool ./adf/ARMTemplateForFactory.json > /dev/null
+          python -m json.tool ./adf/ARMTemplateParametersForFactory.json > /dev/null
+          echo "=== ARM templates are valid JSON ==="
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: drop
+          path: |
+            notebooks/
+            adf/
+            scripts/
+
+  # ============================================================
+  # JOB 2: DEPLOY DEV — Automático
+  # ============================================================
+  deploy-dev:
+    name: "Deploy DEV"
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: drop
+
+      - name: "[MOCK] Deploy Databricks Notebooks (DEV)"
+        run: |
+          echo "============================================"
+          echo "  DEPLOY DATABRICKS — DEV"
+          echo "============================================"
+          echo "Host: ${{ env.DATABRICKS_HOST_DEV }}"
+          echo "Target path: ${{ env.TARGET_PATH }}"
+          echo ""
+          echo "Simulating: databricks workspace import_dir ./notebooks ${{ env.TARGET_PATH }}"
+          echo "  --host ${{ env.DATABRICKS_HOST_DEV }}"
+          echo "  --overwrite"
+          echo ""
+          NOTEBOOKS=$(find ./notebooks -name '*.py' 2>/dev/null || echo "none")
+          echo "Notebooks to deploy:"
+          echo "$NOTEBOOKS" | while read -r nb; do
+            echo "  ✅ Imported: $nb"
+          done
+          echo ""
+          echo "=== Databricks deploy (DEV) completed ==="
+
+      - name: "[MOCK] Deploy ADF ARM Template (DEV)"
+        run: |
+          echo "============================================"
+          echo "  DEPLOY ADF — DEV"
+          echo "============================================"
+          echo "Factory: ${{ env.ADF_FACTORY_DEV }}"
+          echo "Resource Group: ${{ env.ADF_RESOURCE_GROUP }}"
+          echo "Mode: Incremental"
+          echo ""
+          echo "Simulating: az deployment group create"
+          echo "  Template: adf/ARMTemplateForFactory.json"
+          echo "  Parameters: adf/ARMTemplateParametersForFactory.json"
+          echo ""
+          echo "=== ADF deploy (DEV) completed ==="
+
+  # ============================================================
+  # JOB 3: DEPLOY ACC — Automático + smoke tests
+  # ============================================================
+  deploy-acc:
+    name: "Deploy ACC"
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: acc
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: drop
+
+      - name: "[MOCK] Deploy Databricks Notebooks (ACC)"
+        run: |
+          echo "============================================"
+          echo "  DEPLOY DATABRICKS — ACC"
+          echo "============================================"
+          echo "Host: ${{ env.DATABRICKS_HOST_ACC }}"
+          echo "Target path: ${{ env.TARGET_PATH }}"
+          echo ""
+          NOTEBOOKS=$(find ./notebooks -name '*.py' 2>/dev/null || echo "none")
+          echo "Notebooks to deploy:"
+          echo "$NOTEBOOKS" | while read -r nb; do
+            echo "  ✅ Imported: $nb"
+          done
+          echo "=== Databricks deploy (ACC) completed ==="
+
+      - name: "[MOCK] Deploy ADF ARM Template (ACC)"
+        run: |
+          echo "============================================"
+          echo "  DEPLOY ADF — ACC"
+          echo "============================================"
+          echo "Factory: ${{ env.ADF_FACTORY_ACC }}"
+          echo "Mode: Incremental"
+          echo "=== ADF deploy (ACC) completed ==="
+
+      - name: "[MOCK] Smoke Test — Databricks (ACC)"
+        run: |
+          echo "============================================"
+          echo "  SMOKE TEST — Databricks (ACC)"
+          echo "============================================"
+          echo ""
+          echo "[TEST 1] Validating workspace host matches ACC..."
+          HOST="${{ env.DATABRICKS_HOST_ACC }}"
+          if [[ "$HOST" == *"acc"* ]]; then
+            echo "  ✅ PASS — Host $HOST contains 'acc'"
+          else
+            echo "  ❌ FAIL — Host mismatch"
+            exit 1
+          fi
+          echo ""
+          echo "[TEST 2] Checking notebooks exist at ${{ env.TARGET_PATH }}..."
+          NB_COUNT=$(find ./notebooks -name '*.py' | wc -l)
+          echo "  ✅ PASS — Found $NB_COUNT notebooks"
+          echo ""
+          echo "[TEST 3] Checking Databricks jobs are active..."
+          echo "  ✅ PASS — Mock: 3 Lagunitas-related jobs active"
+          echo ""
+          echo "============================================"
+          echo "  RESULTS: 3 passed, 0 failed"
+          echo "============================================"
+
+      - name: "[MOCK] Smoke Test — ADF (ACC)"
+        run: |
+          echo "============================================"
+          echo "  SMOKE TEST — Azure Data Factory (ACC)"
+          echo "============================================"
+          echo ""
+          echo "[TEST 1] Checking ADF factory ${{ env.ADF_FACTORY_ACC }} exists..."
+          echo "  ✅ PASS — Factory exists and is provisioned"
+          echo ""
+          echo "[TEST 2] Checking ADF pipelines are deployed..."
+          echo "  ✅ PASS — Found 4 pipelines:"
+          echo "    - pl_bronze_vendas"
+          echo "    - pl_silver_vendas"
+          echo "    - pl_silver_distribuicao"
+          echo "    - pl_gold_dashboard"
+          echo ""
+          echo "[TEST 3] Checking ADF triggers are active..."
+          echo "  ✅ PASS — All triggers in Started state"
+          echo ""
+          echo "[TEST 4] Validating factory name matches ACC..."
+          echo "  ✅ PASS — Factory name contains 'acc'"
+          echo ""
+          echo "============================================"
+          echo "  RESULTS: 4 passed, 0 failed"
+          echo "============================================"
+
+  # ============================================================
+  # JOB 4: DEPLOY PRD — Com gate de aprovação (GitHub Environment)
+  # ============================================================
+  # Para configurar a aprovação no GitHub:
+  #   1. Settings → Environments → New environment: "prd"
+  #   2. Marcar "Required reviewers" → adicionar aprovadores
+  #   3. Opcionalmente configurar "Wait timer" (ex: 5 min para review)
+  # ============================================================
+  deploy-prd:
+    name: "Deploy PRD (requer aprovação)"
+    needs: deploy-acc
+    runs-on: ubuntu-latest
+    environment: prd  # Requer aprovação configurada no GitHub Environment
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: drop
+
+      - name: "[MOCK] Snapshot ADF state (pre-deploy)"
+        run: |
+          echo "============================================"
+          echo "  ADF SNAPSHOT (PRD) — Pre-deploy backup"
+          echo "============================================"
+          echo "Simulating: az datafactory pipeline list"
+          cat <<EOF > /tmp/adf-snapshot-pre-deploy.json
+          {
+            "snapshot_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "factory": "${{ env.ADF_FACTORY_PRD }}",
+            "pipelines": [
+              {"name": "pl_bronze_vendas", "status": "Enabled"},
+              {"name": "pl_silver_vendas", "status": "Enabled"},
+              {"name": "pl_silver_distribuicao", "status": "Enabled"},
+              {"name": "pl_gold_dashboard", "status": "Enabled"}
+            ]
+          }
+          EOF
+          echo "Snapshot saved. Contents:"
+          cat /tmp/adf-snapshot-pre-deploy.json | python3 -m json.tool
+          echo "=== Snapshot complete ==="
+
+      - name: Validate Databricks host is PRD
+        run: |
+          HOST="${{ env.DATABRICKS_HOST_PRD }}"
+          echo "Validating host: $HOST"
+          if [[ "$HOST" != *"prd"* ]]; then
+            echo "##[error] DATABRICKS_HOST does not contain 'prd'. Aborting."
+            exit 1
+          fi
+          echo "✅ Host validation passed: $HOST"
+
+      - name: "[MOCK] Deploy Databricks Notebooks (PRD)"
+        run: |
+          echo "============================================"
+          echo "  DEPLOY DATABRICKS — PRD"
+          echo "============================================"
+          echo "Host: ${{ env.DATABRICKS_HOST_PRD }}"
+          echo "Target path: ${{ env.TARGET_PATH }}"
+          echo ""
+          NOTEBOOKS=$(find ./notebooks -name '*.py' 2>/dev/null || echo "none")
+          echo "Notebooks deployed to PRD:"
+          echo "$NOTEBOOKS" | while read -r nb; do
+            echo "  ✅ Imported: $nb → ${{ env.TARGET_PATH }}"
+          done
+          echo ""
+          echo "=== Databricks deploy (PRD) completed ==="
+
+      - name: "[MOCK] Deploy ADF ARM Template (PRD)"
+        run: |
+          echo "============================================"
+          echo "  DEPLOY ADF — PRD"
+          echo "============================================"
+          echo "Factory: ${{ env.ADF_FACTORY_PRD }}"
+          echo "Resource Group: ${{ env.ADF_RESOURCE_GROUP }}"
+          echo "Mode: Incremental"
+          echo ""
+          echo "Template: adf/ARMTemplateForFactory.json"
+          echo "=== ADF deploy (PRD) completed ==="
+
+      - name: "[MOCK] Reactivate ADF triggers (PRD)"
+        run: |
+          echo "============================================"
+          echo "  REACTIVATE ADF TRIGGERS — PRD"
+          echo "============================================"
+          for trigger in tr_daily_vendas tr_daily_distribuicao tr_hourly_dashboard; do
+            echo "  ✅ Started trigger: $trigger"
+          done
+          echo "=== All triggers reactivated ==="
+
+  # ============================================================
+  # JOB 5: SMOKE TESTS PRD + LOG ESTRUTURADO
+  # ============================================================
+  smoke-tests-prd:
+    name: "Smoke Tests & Deploy Log (PRD)"
+    needs: deploy-prd
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: drop
+
+      - name: "[MOCK] Smoke Test — Databricks (PRD)"
+        run: |
+          echo "============================================"
+          echo "  SMOKE TEST — Databricks (PRD)"
+          echo "============================================"
+          echo ""
+          echo "[TEST 1] Validating workspace host matches PRD..."
+          echo "  ✅ PASS — Host ${{ env.DATABRICKS_HOST_PRD }} contains 'prd'"
+          echo ""
+          echo "[TEST 2] Checking notebooks exist at ${{ env.TARGET_PATH }}..."
+          NB_COUNT=$(find ./notebooks -name '*.py' | wc -l)
+          echo "  ✅ PASS — Found $NB_COUNT notebooks at ${{ env.TARGET_PATH }}"
+          echo ""
+          echo "[TEST 3] Checking Databricks jobs are active..."
+          echo "  ✅ PASS — Mock: 3 Lagunitas jobs active and pointing to correct notebooks"
+          echo ""
+          echo "============================================"
+          echo "  RESULTS: 3 passed, 0 failed"
+          echo "============================================"
+
+      - name: "[MOCK] Smoke Test — ADF (PRD)"
+        run: |
+          echo "============================================"
+          echo "  SMOKE TEST — Azure Data Factory (PRD)"
+          echo "============================================"
+          echo ""
+          echo "[TEST 1] Checking ADF factory ${{ env.ADF_FACTORY_PRD }} exists..."
+          echo "  ✅ PASS — Factory ${{ env.ADF_FACTORY_PRD }} exists (provisioningState: Succeeded)"
+          echo ""
+          echo "[TEST 2] Checking ADF pipelines are deployed..."
+          echo "  ✅ PASS — Found 4 pipelines in ${{ env.ADF_FACTORY_PRD }}:"
+          echo "    - pl_bronze_vendas       [Enabled]"
+          echo "    - pl_silver_vendas       [Enabled]"
+          echo "    - pl_silver_distribuicao [Enabled]"
+          echo "    - pl_gold_dashboard      [Enabled]"
+          echo ""
+          echo "[TEST 3] Checking ADF triggers are active..."
+          echo "  ✅ PASS — All 3 triggers in Started state:"
+          echo "    - tr_daily_vendas        [Started]"
+          echo "    - tr_daily_distribuicao  [Started]"
+          echo "    - tr_hourly_dashboard    [Started]"
+          echo ""
+          echo "[TEST 4] Validating factory name matches PRD..."
+          echo "  ✅ PASS — Factory ${{ env.ADF_FACTORY_PRD }} contains 'prd'"
+          echo ""
+          echo "============================================"
+          echo "  RESULTS: 4 passed, 0 failed"
+          echo "============================================"
+
+      - name: "Emit structured deploy log"
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          COMMIT_SHA="${{ github.sha }}"
+          MERGED_BY="${{ github.actor }}"
+          
+          echo "============================================"
+          echo "  DEPLOY LOG — PRD"
+          echo "============================================"
+          cat <<EOF | python3 -m json.tool
+          [{
+            "timestamp": "$TIMESTAMP",
+            "pipeline_run_id": "${{ github.run_number }}",
+            "commit_sha": "$COMMIT_SHA",
+            "merged_by": "$MERGED_BY",
+            "environment": "PRD",
+            "databricks_host": "${{ env.DATABRICKS_HOST_PRD }}",
+            "databricks_target_path": "${{ env.TARGET_PATH }}",
+            "adf_factory_name": "${{ env.ADF_FACTORY_PRD }}",
+            "smoke_tests": {
+              "databricks_workspace_validation": "PASS",
+              "databricks_notebooks_exist": "PASS",
+              "databricks_jobs_active": "PASS",
+              "adf_pipelines_enabled": "PASS",
+              "adf_triggers_active": "PASS"
+            },
+            "overall_status": "SUCCESS",
+            "source_branch": "${{ github.ref_name }}"
+          }]
+          EOF
+          echo ""
+          echo "ℹ️  Em produção, este log seria enviado ao Azure Log Analytics"
+          echo "   via HTTP Data Collector API para queries KQL e alertas."
+          echo ""
+          echo "=== Deploy log emitted successfully ==="

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "factoryName": {
+      "type": "string",
+      "defaultValue": "adf-lagunitas-prd"
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "brazilsouth"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.DataFactory/factories/pipelines",
+      "apiVersion": "2018-06-01",
+      "name": "[concat(parameters('factoryName'), '/pl_silver_vendas')]",
+      "properties": {
+        "activities": [
+          {
+            "name": "RunSilverVendas",
+            "type": "DatabricksNotebook",
+            "typeProperties": {
+              "notebookPath": "/Shared/lagunitas/silver_vendas"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.DataFactory/factories/pipelines",
+      "apiVersion": "2018-06-01",
+      "name": "[concat(parameters('factoryName'), '/pl_silver_distribuicao')]",
+      "properties": {
+        "activities": [
+          {
+            "name": "RunSilverDistribuicao",
+            "type": "DatabricksNotebook",
+            "typeProperties": {
+              "notebookPath": "/Shared/lagunitas/silver_distribuicao"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
