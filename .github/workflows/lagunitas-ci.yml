@@ -13,6 +13,7 @@ on:
   workflow_dispatch:  # Permite execução manual para testes
 
 env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
   DATABRICKS_HOST_DEV: "https://adb-lagunitas-dev.azuredatabricks.net"
   DATABRICKS_HOST_ACC: "https://adb-lagunitas-acc.azuredatabricks.net"
   DATABRICKS_HOST_PRD: "https://adb-lagunitas-prd.azuredatabricks.net"
