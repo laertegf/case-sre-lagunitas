@@ -39,7 +39,7 @@ echo "  DEPLOY LOG — $ENVIRONMENT"
 echo "============================================"
 echo "$DEPLOY_LOG" | python3 -m json.tool
 
-# Enviar para Log Analytics via HTTP Data Collector API
+# Enviar para Log Analytics via "HTTP Data Collector API"
 if [[ "$LOG_ANALYTICS_WS_ID" != "mock" ]]; then
   CONTENT_LENGTH=$(echo -n "$DEPLOY_LOG" | wc -c)
   RFC1123_DATE=$(date -u +"%a, %d %b %Y %H:%M:%S GMT")
