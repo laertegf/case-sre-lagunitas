@@ -43,8 +43,8 @@ case-sre-laerte-gomes/
 |---|-----------|---------|
 | 1 | Diagnóstico: causas raiz, análise do YAML original, priorização | `documento-de-decisao.pdf` §1 |
 | 2 | YAML refatorado com gate, smoke tests, multi-ambiente | `azure-pipelines.yml` |
-| 3 | Proposta de observabilidade (Log Analytics + KQL) | `documento-de-decisao.md` §2 |
-| 4 | Estratégia de rollback (Databricks + ADF) com RTO | `documento-de-decisao.md` §3 |
+| 3 | Proposta de observabilidade (Log Analytics + KQL) | `documento-de-decisao.pdf` §2 |
+| 4 | Estratégia de rollback (Databricks + ADF) com RTO | `documento-de-decisao.pdf` §3 |
 | 5 | GitHub Actions com mocks rodando | `.github/workflows/lagunitas-ci.yml` |
 
 ---
