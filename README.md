@@ -7,7 +7,7 @@
 
 ## Repositório GitHub
 
-**Link:** `https://github.com/laertegomes/case-sre-lagunitas`
+**Link:** `https://github.com/laertegf/case-sre-lagunitas`
 
 > O pipeline GitHub Actions roda automaticamente a cada push na `main` ou via `workflow_dispatch` (execução manual).
 
@@ -17,8 +17,8 @@
 
 ```
 case-sre-laerte-gomes/
-├── azure-pipelines.yml              # YAML refatorado para Azure DevOps (obrigatório)
-├── documento-de-decisao.md          # Diagnóstico, observabilidade e rollback
+├── azure-pipelines.yml              # YAML refatorado para Azure DevOps 
+├── documento-de-decisao.pdf          # Diagnóstico, observabilidade e rollback
 ├── notebooks/
 │   ├── silver_vendas.py             # Notebook de transformação Silver (vendas)
 │   └── silver_distribuicao.py       # Notebook de transformação Silver (distribuição)
@@ -41,7 +41,7 @@ case-sre-laerte-gomes/
 
 | # | Entregável | Arquivo |
 |---|-----------|---------|
-| 1 | Diagnóstico: causas raiz, análise do YAML original, priorização | `documento-de-decisao.md` §1 |
+| 1 | Diagnóstico: causas raiz, análise do YAML original, priorização | `documento-de-decisao.pdf` §1 |
 | 2 | YAML refatorado com gate, smoke tests, multi-ambiente | `azure-pipelines.yml` |
 | 3 | Proposta de observabilidade (Log Analytics + KQL) | `documento-de-decisao.md` §2 |
 | 4 | Estratégia de rollback (Databricks + ADF) com RTO | `documento-de-decisao.md` §3 |
@@ -91,7 +91,7 @@ Smoke Tests PRD + Deploy Log
 
 ## Decisões técnicas (resumo)
 
-O documento completo está em `documento-de-decisao.md`. Destaques:
+O documento completo está em `documento-de-decisao.pdf`. Destaques:
 
 1. **Gate de aprovação** é a melhoria #1 — previne o incidente ao invés de apenas detectar
 2. **Variable Groups por ambiente** vinculados a Key Vault separados eliminam risco de cross-env deploy
