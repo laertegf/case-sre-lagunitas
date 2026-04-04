@@ -28,9 +28,9 @@ stages:
 
           # Lint de sintaxe Python (mantido do original)
           - script: |
-              echo "=== Validating notebook syntax ==="
+              echo "== Validating notebook syntax =="
               find ./notebooks -name '*.py' | xargs python -m py_compile
-              echo "=== Syntax validation passed ==="
+              echo "== Syntax validation passed =="
             displayName: 'Lint notebooks (py_compile)'
 
           # Lint adicional com ruff para pegar problemas além de sintaxe
@@ -42,10 +42,10 @@ stages:
 
           # Validação de ARM Templates do ADF
           - script: |
-              echo "=== Validating ADF ARM templates ==="
+              echo "== Validating ADF ARM templates =="
               python -m json.tool ./adf/ARMTemplateForFactory.json > /dev/null
               python -m json.tool ./adf/ARMTemplateParametersForFactory.json > /dev/null
-              echo "=== ARM templates are valid JSON ==="
+              echo "== ARM templates are valid JSON =="
             displayName: 'Validate ADF ARM templates'
 
           # Publicar artefatos
