@@ -87,6 +87,43 @@ Smoke Tests PRD + Deploy Log
 - **Deploy PRD**: snapshot pré-deploy → validação de host → deploy → reativação de triggers
 - **Smoke Tests PRD**: valida workspace, notebooks, pipelines, triggers + emite log estruturado
 
+
+## Evidências de execução do pipeline
+
+O pipeline foi executado com sucesso no GitHub Actions utilizando mocks dos recursos Azure. Abaixo estão as evidências de cada etapa do fluxo.
+
+### Pipeline completo — 5 jobs com sucesso
+Build & Validate → Deploy DEV → Deploy ACC → Deploy PRD (com aprovação) → Smoke Tests & Deploy Log. Tempo total: 40 segundos.
+
+<img width="2173" height="351" alt="image" src="https://github.com/user-attachments/assets/9681483a-578d-4327-961d-96a5824b410e" />
+
+### Gate de aprovação — Deploy PRD aguardando review
+O Environment "prd" foi configurado com Required Reviewers. O pipeline pausou automaticamente antes do deploy em produção, aguardando aprovação.
+
+<img width="2169" height="671" alt="image" src="https://github.com/user-attachments/assets/65215899-e8a5-43eb-95cd-913d28b931d8" />
+
+### Confirmação de deploy
+Tela de aprovação exigindo confirmação explícita antes de prosseguir com o deploy em PRD.
+
+<img width="2179" height="671" alt="image" src="https://github.com/user-attachments/assets/4356847c-fb17-4758-a323-41afcb0a80cf" />
+<img width="2195" height="686" alt="image" src="https://github.com/user-attachments/assets/7b421b28-89dd-4ac4-b05f-9d9a6c295ec4" />
+
+### Smoke Test — Databricks (PRD)
+3 validações executadas: workspace host correto, notebooks no path esperado, jobs ativos. Resultado: 3 passed, 0 failed.
+
+<img width="637" height="740" alt="image" src="https://github.com/user-attachments/assets/15e4f56e-e749-4d27-b1ad-a888ac54df84" />
+
+### Smoke Test — ADF (PRD)
+4 validações executadas: factory acessível, pipelines Enabled, triggers Started, factory name corresponde a PRD. Resultado: 4 passed, 0 failed.
+
+<img width="623" height="923" alt="image" src="https://github.com/user-attachments/assets/91adccda-eee7-45fd-9b9a-5bd81f0c1316" />
+
+### Log estruturado de deploy
+JSON emitido ao final do pipeline com timestamp, commit SHA, ambiente, resultado de cada smoke test e status geral. Em produção, seria enviado ao Azure Log Analytics via HTTP Data Collector API.
+
+<img width="574" height="879" alt="image" src="https://github.com/user-attachments/assets/f61b3b6c-b43b-4184-afb7-78bc76a4135a" />
+
+
 ---
 
 ## Decisões técnicas (resumo)
