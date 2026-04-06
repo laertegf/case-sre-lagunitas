@@ -14,9 +14,9 @@ variables:
     value: $(Build.RequestedFor)
 
 stages:
-  # ============================================================
+  # ==========================================================
   # STAGE 1: BUILD — Validação de artefatos
-  # ============================================================
+  # ==========================================================
   - stage: Build
     displayName: 'Build & Validate Artifacts'
     jobs:
@@ -62,9 +62,9 @@ stages:
             artifact: drop
             displayName: 'Publish artifacts'
 
-  # ============================================================
+  # ==========================================================
   # STAGE 2: DEPLOY DEV — Deploy automático em DEV
-  # ============================================================
+  # ==========================================================
   - stage: DeployDEV
     displayName: 'Deploy to DEV'
     dependsOn: Build
@@ -108,9 +108,9 @@ stages:
                     csmParametersFile: '$(Pipeline.Workspace)/drop/adf/ARMTemplateParametersForFactory.json'
                     deploymentMode: 'Incremental'
 
-  # ============================================================
+  # ==========================================================
   # STAGE 3: DEPLOY ACC — Deploy em aceitação com smoke tests
-  # ============================================================
+  # ==========================================================
   - stage: DeployACC
     displayName: 'Deploy to ACC'
     dependsOn: DeployDEV
@@ -275,9 +275,9 @@ stages:
                       done
                       echo "=== All triggers reactivated ==="
 
-  # ============================================================
+  # ==================================================
   # STAGE 5: SMOKE TESTS PRD + OBSERVABILIDADE
-  # ============================================================
+  # ==================================================
   - stage: SmokeTestsPRD
     displayName: 'Smoke Tests & Deploy Log (PRD)'
     dependsOn: DeployPRD

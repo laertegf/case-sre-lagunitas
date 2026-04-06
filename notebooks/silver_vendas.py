@@ -5,7 +5,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
-
 def transform_vendas(spark, source_path, target_path):
     """Transforma dados brutos de vendas (Bronze) para Silver."""
     df_bronze = spark.read.format("delta").load(source_path)

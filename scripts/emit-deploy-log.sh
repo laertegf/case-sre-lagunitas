@@ -34,9 +34,9 @@ DEPLOY_LOG=$(cat <<EOF
 EOF
 )
 
-echo "============================================"
+echo "=========================================="
 echo "  DEPLOY LOG — $ENVIRONMENT"
-echo "============================================"
+echo "=========================================="
 echo "$DEPLOY_LOG" | python3 -m json.tool
 
 # Enviar para Log Analytics via HTTP Data Collector API
